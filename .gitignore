@@ -1,0 +1,25 @@
+# Rust 构建产物（保留 Cargo.lock）
+/target/
+*.exe
+*.pdb
+
+# 本地便签、备份或冒烟数据
+/data/
+wall.json
+wall.lock
+wall.tmp
+
+# 本地环境与编辑器设置
+.env
+.env.*
+!.env.example
+/.idea/
+/.vscode/
+/.vs/
+/.agents/
+/.codex/
+*.swp
+*.log
+Thumbs.db
+Desktop.ini
+.DS_Store
