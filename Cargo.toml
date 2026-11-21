@@ -1,6 +1,6 @@
 [package]
 name = "e-sticker"
-version = "0.2.8"
+version = "0.2.9"
 edition = "2024"
 description = "A lightweight local sticky-note wall for Windows"
 repository = "https://github.com/Withnoidea/E-Sticker"

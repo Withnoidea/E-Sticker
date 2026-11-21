@@ -369,6 +369,44 @@ impl Editor {
         Ok(())
     }
 
+    pub fn export_pdf(&self, path: &Path, session: u64) -> windows::core::Result<()> {
+        let webview = self
+            .state
+            .borrow()
+            .webview
+            .clone()
+            .ok_or_else(windows::core::Error::from_thread)?;
+        let state = Rc::downgrade(&self.state);
+        let destination = path.to_string_lossy().into_owned();
+        let handler = PrintToPdfCompletedHandler::create(Box::new(move |status, successful| {
+            if let Some(state) = state.upgrade()
+                && !state.borrow().closed
+                && let Some(webview) = state.borrow().webview.clone()
+            {
+                let response = match status {
+                    Ok(()) if successful => {
+                        serde_json::json!({"type":"pdf-result", "session":session, "path":destination})
+                    }
+                    Ok(()) => {
+                        serde_json::json!({"type":"pdf-result", "session":session, "error":"无法写入 PDF，请检查目标文件是否被占用及目录权限"})
+                    }
+                    Err(error) => {
+                        serde_json::json!({"type":"pdf-result", "session":session, "error":error.to_string()})
+                    }
+                };
+                let _ = send(&webview, &response);
+            }
+            Ok(())
+        }));
+        unsafe {
+            webview.cast::<ICoreWebView2_7>()?.PrintToPdf(
+                PCWSTR(wide(&path.to_string_lossy()).as_ptr()),
+                None,
+                &handler,
+            )
+        }
+    }
+
     pub fn layout(&self, bounds: windows_sys::Win32::Foundation::RECT, visible: bool) {
         let mut state = self.state.borrow_mut();
         state.bounds = RECT {

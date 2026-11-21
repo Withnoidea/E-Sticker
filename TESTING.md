@@ -22,7 +22,7 @@ cargo build --release --locked
 ## 原生墙面与真实编辑器回归
 
 ```powershell
-python -u scripts/editor_qa.py --exe target/release/e-sticker.exe --output artifacts/qa-release-v0.2.8
+python -u scripts/editor_qa.py --exe target/release/e-sticker.exe --output artifacts/qa-release-v0.2.9
 ```
 
 该脚本不会替换系统剪贴板。它复用原生窗口定位和鼠标工具，但编辑操作直接发给真实 WebView2 页面，不往隐藏的旧正文控件写测试内容。
@@ -48,10 +48,13 @@ python -u scripts/editor_qa.py --exe target/release/e-sticker.exe --output artif
 
 ## 打包与最终验证
 
+工具栏提示与 PDF 专项回归：`python -u scripts/editor_export_qa.py --exe target/release/e-sticker.exe`。脚本在隔离数据目录中检查普通与最小窗口提示方向、保存对话框取消后重试，以及三种编辑模式实际生成 PDF；内容包含中文、任务列表、表格、公式、本地图片和长文分页。PDF 位于该次 `artifacts/export-qa-*` 目录，可打开检查排版或用 PDF 解析工具检查正文与页数。
+
 ```powershell
 powershell -File scripts/package.ps1
-Expand-Archive dist/E-Sticker-v0.2.8-windows-x64.zip artifacts/release-check-v0.2.8
-python -u scripts/editor_qa.py --exe artifacts/release-check-v0.2.8/E-Sticker-v0.2.8-windows-x64/E-Sticker.exe --output artifacts/qa-packaged-v0.2.8
+Expand-Archive dist/E-Sticker-v0.2.9-windows-x64.zip artifacts/release-check-v0.2.9
+python -u scripts/editor_qa.py --exe artifacts/release-check-v0.2.9/E-Sticker-v0.2.9-windows-x64/E-Sticker.exe --output artifacts/qa-packaged-v0.2.9
+python -u scripts/editor_export_qa.py --exe artifacts/release-check-v0.2.9/E-Sticker-v0.2.9-windows-x64/E-Sticker.exe
 ```
 
 必须测试压缩包实际解压出的 EXE，而不仅是 debug 产物。发布包附带 `SHA256SUMS.txt`；ZIP 同目录另有 `.sha256` 校验文件。升级不要混用旧版 EXE。

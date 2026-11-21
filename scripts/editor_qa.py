@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 import time
 from PIL import Image
 
@@ -21,10 +22,14 @@ def browser(*arguments):
         command = ["cmd", "/c", executable]
     else:
         command = [executable]
-    result = subprocess.run(command + ["--session", "esticker-editor-qa", "--cdp", "9225", "--json", *arguments], capture_output=True, text=True, encoding="utf-8", timeout=35)
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout, tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr:
+        result = subprocess.run(command + ["--session", f"esticker-editor-qa-{os.getpid()}", "--cdp", "9225", "--json", *arguments], stdout=stdout, stderr=stderr, timeout=35)
+        stdout.seek(0)
+        stderr.seek(0)
+        output, error = stdout.read(), stderr.read()
     if result.returncode:
-        raise AssertionError(result.stderr or result.stdout)
-    response = json.loads(result.stdout)
+        raise AssertionError(error or output)
+    response = json.loads(output)
     if not response.get("success"):
         raise AssertionError(response)
     return response.get("data", {})

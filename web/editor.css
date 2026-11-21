@@ -4,8 +4,21 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background:
 [hidden] { display: none !important; }
 #message { padding: 24px; line-height: 1.8; }
 #editor { height: 100%; }
+#print-content { position: absolute; left: -10000px; top: 0; width: 740px; }
+@media print {
+  @page { size: A4; margin: 16mm; }
+  html, body { height: auto !important; overflow: visible !important; background: white !important; color: #222 !important; }
+  body > :not(#print-content) { display: none !important; }
+  #print-content { position: static; width: auto; max-width: none; padding: 0; background: white; color: #222; }
+  #print-content pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  #print-content img { max-width: 100%; }
+  #print-content tr, #print-content img { break-inside: avoid; }
+  #print-content h1, #print-content h2, #print-content h3 { break-after: avoid; }
+}
 .vditor { border: 1px solid #dedfd5; border-radius: 9px; --panel-background-color: #f4f4ec; --toolbar-background-color: #f4f4ec; --toolbar-icon-hover-color: #526f5a; }
 .vditor-toolbar { padding: 7px 12px !important; border-bottom: 1px solid #dedfd5; }
+.vditor-tip { pointer-events: none; }
+.vditor-tip__close { pointer-events: auto; }
 .vditor-reset { font-family: var(--editor-font, "Microsoft YaHei UI", sans-serif) !important; line-height: var(--editor-line-height, 1.8) !important; font-size: var(--editor-font-size, 16px); }
 .vditor-reset pre, .vditor-reset code { font-family: Consolas, "Microsoft YaHei UI", monospace; }
 .vditor-outline { max-width: 210px; }

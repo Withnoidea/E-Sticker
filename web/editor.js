@@ -14,6 +14,10 @@
   let lastValue = "";
   let baseline = "";
   let originalBody = "";
+  let exporting = false;
+  const printContent = document.createElement("div");
+  printContent.id = "print-content";
+  document.body.appendChild(printContent);
   const post = (type, data = {}) => bridge.postMessage({ type, session, ...data });
   const value = () => editor.getValue().replaceAll("https://notes.esticker.local/", "");
   const emit = () => {
@@ -28,7 +32,7 @@
     if (body !== lastValue) { lastValue = body; post("change", { body }); }
   };
   const flush = () => {
-    if (!ready || uploads || composing) { pendingFlush = true; return; }
+    if (!ready || uploads || composing || exporting) { pendingFlush = true; return; }
     pendingFlush = false;
     if (page === "editor") {
       emit();
@@ -80,6 +84,45 @@
     }
     return null;
   };
+  const finishExport = text => {
+    exporting = false;
+    printContent.replaceChildren();
+    const escaped = document.createElement("span");
+    escaped.textContent = text;
+    editor.tip(escaped.innerHTML, 6000);
+    if (pendingFlush) flush();
+  };
+  const exportPDF = async () => {
+    if (!ready || exporting) return;
+    if (uploads || composing) { editor.tip("请等待图片导入或输入完成后再导出"); return; }
+    exporting = true;
+    editor.tip("正在准备 PDF…", 0);
+    try {
+      await Vditor.preview(printContent, editor.getValue(), {
+        cdn: location.origin + "/vditor", lang: "zh_CN",
+        markdown: { sanitize: true, linkBase: "https://notes.esticker.local/" },
+        theme: { current: preferences.editor.theme === "dark" ? "dark" : "light", path: location.origin + "/vditor/dist/css/content-theme" },
+        hljs: { enable: true, style: preferences.editor.code_theme },
+        math: { engine: "KaTeX" }
+      });
+      let timeout;
+      try {
+        await Promise.race([
+          (async () => {
+            const deadline = Date.now() + 10000;
+            while (printContent.querySelector('.language-math:not([data-math])')) {
+              if (Date.now() >= deadline) throw new Error("公式排版超时，请重试");
+              await new Promise(resolve => setTimeout(resolve, 50));
+            }
+            await Promise.all([...printContent.querySelectorAll("img")].map(image => image.decode().catch(() => {})));
+            await document.fonts.ready;
+          })(),
+          new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("排版资源加载超时，请重试")), 10000); })
+        ]);
+      } finally { clearTimeout(timeout); }
+      post("export-pdf");
+    } catch (error) { finishExport("PDF 导出失败：" + error.message); }
+  };
   bridge.addEventListener("message", event => {
     const data = event.data;
     if (data.type === "open") {
@@ -115,7 +158,7 @@
         counter: { enable: settings.counter, type: "markdown" },
         outline: { enable: settings.outline, position: "left" },
         toolbarConfig: { pin: true, hide: false },
-        toolbar: ["headings", "bold", "italic", "strike", "|", "list", "ordered-list", "check", "outdent", "indent", "quote", "|", "code", "inline-code", "link", "upload", "table", "line", "|", "undo", "redo", "|", "edit-mode", "both", "outline", "export"],
+        toolbar: ["headings", "bold", "italic", "strike", "|", "list", "ordered-list", "check", "outdent", "indent", "quote", "|", "code", "inline-code", "link", "upload", "table", "line", "|", "undo", "redo", "|", "edit-mode", "both", "outline", "export"].map((name, index) => name === "|" ? name : { name, tipPosition: index < 3 ? "se" : index > 21 ? "sw" : "s" }),
         preview: {
           delay: 150, maxWidth: settings.content_width, actions: [],
           theme: { current: settings.theme === "dark" ? "dark" : "light", path: location.origin + "/vditor/dist/css/content-theme" },
@@ -134,6 +177,8 @@
           editor.focus();
         }
       });
+    } else if (data.session === session && data.type === "pdf-result") {
+      finishExport(data.error ? "PDF 导出失败：" + data.error : data.path ? "PDF 已导出：" + data.path : "已取消 PDF 导出");
     } else if (data.session === session && data.type === "flush") flush();
     else if (data.session === session && data.type === "insert") {
       editor.insertValue(data.text);
@@ -157,6 +202,14 @@
     if ((event.ctrlKey && (event.key.toLowerCase() === "s" || event.key === "Enter")) || (event.key === "Escape" && !composing)) {
       event.preventDefault(); event.stopImmediatePropagation();
       post("action", { action: event.key === "Escape" ? "back" : "save" });
+    }
+  }, true);
+  document.addEventListener("click", event => {
+    if (event.target.closest('.vditor-hint button[data-type="pdf"]')) {
+      event.preventDefault(); event.stopImmediatePropagation();
+      document.querySelectorAll('.vditor-toolbar .vditor-hint').forEach(panel => panel.style.display = "none");
+      exportPDF();
+      return;
     }
   }, true);
   document.addEventListener("click", event => {

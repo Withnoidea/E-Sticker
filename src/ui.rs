@@ -24,7 +24,9 @@ use windows_sys::Win32::{
     System::LibraryLoader::GetModuleHandleW,
     UI::{
         Controls::Dialogs::{
-            GetOpenFileNameW, OFN_EXPLORER, OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR, OPENFILENAMEW,
+            CommDlgExtendedError, GetOpenFileNameW, GetSaveFileNameW, OFN_EXPLORER,
+            OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST,
+            OPENFILENAMEW,
         },
         Input::KeyboardAndMouse::*,
         Shell::{
@@ -729,6 +731,40 @@ unsafe fn choose_image(hwnd: HWND) -> Option<PathBuf> {
     }
     let end = path.iter().position(|unit| *unit == 0)?;
     Some(PathBuf::from(OsString::from_wide(&path[..end])))
+}
+
+unsafe fn choose_pdf(hwnd: HWND) -> io::Result<Option<PathBuf>> {
+    use std::{ffi::OsString, os::windows::ffi::OsStringExt};
+    let filter = wide("PDF 文档\0*.pdf\0");
+    let title = wide("导出 PDF");
+    let extension = wide("pdf");
+    let mut path = vec![0; 32768];
+    let filename = wide("E-Sticker.pdf");
+    path[..filename.len()].copy_from_slice(&filename);
+    let mut dialog = OPENFILENAMEW {
+        lStructSize: size_of::<OPENFILENAMEW>() as u32,
+        hwndOwner: hwnd,
+        lpstrFilter: filter.as_ptr(),
+        lpstrTitle: title.as_ptr(),
+        lpstrDefExt: extension.as_ptr(),
+        lpstrFile: path.as_mut_ptr(),
+        nMaxFile: path.len() as u32,
+        Flags: OFN_EXPLORER | OFN_NOCHANGEDIR | OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST,
+        ..zeroed()
+    };
+    if GetSaveFileNameW(&mut dialog) == 0 {
+        let error = CommDlgExtendedError();
+        return if error == 0 {
+            Ok(None)
+        } else {
+            Err(io::Error::other(format!("无法打开保存对话框：{error}")))
+        };
+    }
+    let end = path
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(path.len());
+    Ok(Some(PathBuf::from(OsString::from_wide(&path[..end]))))
 }
 
 impl App {
@@ -2590,6 +2626,26 @@ impl App {
                         EDITOR_SAVE
                     };
                     self.command(action, BN_CLICKED);
+                }
+                "export-pdf" if self.editing.as_ref().is_some_and(|edit| edit.article) => {
+                    let result = choose_pdf(self.hwnd);
+                    let error = match result {
+                        Ok(Some(path)) => self
+                            .editor
+                            .as_ref()
+                            .unwrap()
+                            .export_pdf(&path, self.editor_session)
+                            .err()
+                            .map(|error| error.to_string()),
+                        Ok(None) => {
+                            let _ = self.editor.as_ref().unwrap().post(serde_json::json!({"type":"pdf-result", "session":self.editor_session}));
+                            None
+                        }
+                        Err(error) => Some(error.to_string()),
+                    };
+                    if let Some(error) = error {
+                        let _ = self.editor.as_ref().unwrap().post(serde_json::json!({"type":"pdf-result", "session":self.editor_session, "error":error}));
+                    }
                 }
                 "link" => {
                     if let Some(url) = event["url"].as_str()

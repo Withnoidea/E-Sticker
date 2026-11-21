@@ -14,13 +14,15 @@
 - **找得到，也理得清**：搜索短句、正文和标签；列表支持筛选、排序、置顶、归档与回收站。
 - **内容留在本机**：无需账号，便签与图片保存到本地，支持备份和存储目录迁移。
 
-## v0.2.8 体验版
+## v0.2.9 体验版
 
-当前仓库提供源码与打包脚本，尚未发布 GitHub Release。按下方步骤构建即可运行；执行 `powershell -File scripts/package.ps1` 可在本地生成 `dist/E-Sticker-v0.2.8-windows-x64.zip`。`dist/` 不提交到 Git。
+在 [GitHub Release](https://github.com/Withnoidea/E-Sticker/releases/tag/v0.2.9) 下载 `E-Sticker-v0.2.9-windows-x64.zip`，解压即可运行。Release 同时提供 ZIP 的 SHA-256 校验文件。也可按下方步骤从源码构建；执行 `powershell -File scripts/package.ps1` 会在本地生成相同结构的发布包。`dist/` 不提交到 Git，二进制包作为 Release 附件发布。
 
 使用打包后的应用时，解压并运行 `E-Sticker.exe` 即可，无需安装 Rust、Node.js 或 Python；正文和设置需要 **Microsoft Edge WebView2 Evergreen Runtime**。升级前关闭旧版窗口，不要同时运行两个版本。
 
 本版将自制 Markdown 文本框替换为 Vditor，支持即时渲染、所见即所得和源码分屏；新增正文排版、主题、大纲、字数和保存延迟设置。便签墙仍是原生窗口，已有数据继续兼容。详细变更见 [CHANGELOG.md](CHANGELOG.md)。
+
+v0.2.9 修复工具栏提示被顶部裁切和 PDF 导出无响应：提示改为向下显示，PDF 使用 WebView2 原生导出，提供保存位置选择与完成、取消、失败反馈。
 
 ## 界面预览
 
@@ -103,6 +105,8 @@ HTTP(S) 和邮件链接交给系统默认应用打开；其他可执行链接不
 
 ## 快捷键
 
+导出 PDF：在正文工具栏选择「导出 → PDF」，在系统保存对话框中选择位置。完成后会提示文件路径；取消不会修改正文。PDF 仅包含排版后的正文，不包含工具栏和文章大纲。
+
 | 操作 | 快捷键 |
 | --- | --- |
 | 新建便签 | `Ctrl+N` |
@@ -127,7 +131,7 @@ HTTP(S) 和邮件链接交给系统默认应用打开；其他可执行链接不
 
 测试和打包方法见 [TESTING.md](TESTING.md)。运行 `powershell -File scripts/package.ps1` 可执行检查并生成发布包。
 
-v0.2.8 已通过 30 项 Rust 单元测试、13 项最终发布包的真实窗口回归，以及格式检查、Clippy 和包内 SHA-256 校验。真实中文输入法组合态、系统剪贴板格式和多屏 DPI 等手工验收范围见测试文档；这些自动化结果不代表所有 Windows 环境均已覆盖。
+v0.2.9 已通过 30 项 Rust 单元测试、13 项最终发布包的真实窗口回归，以及工具栏提示与 PDF 专项检查、格式检查、Clippy 和包内 SHA-256 校验。PDF 专项覆盖三种编辑模式、取消后重试、中文、任务列表、表格、公式、本地图片和长文分页。真实中文输入法组合态、系统剪贴板格式和多屏 DPI 等手工验收范围见测试文档；这些自动化结果不代表所有 Windows 环境均已覆盖。
 
 README 截图可用 `python -u scripts/readme_screenshots.py` 重新生成；该脚本需要 Python、Pillow、agent-browser 和 WebView2，使用 `artifacts/` 下的隔离演示数据，不读取真实便签。
 
