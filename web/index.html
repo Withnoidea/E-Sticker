@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' https://notes.esticker.local data: blob:; font-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+  <link rel="stylesheet" href="/vditor/dist/index.css">
+  <link rel="stylesheet" href="/editor.css">
+  <title>E-Sticker 正文</title>
+</head>
+<body>
+  <div id="message" role="status">正在准备正文编辑器…</div>
+  <main id="editor" hidden></main>
+  <main id="settings" hidden>
+    <header><span class="eyebrow">E-STICKER / PREFERENCES</span><h1>让书写更顺手</h1><p>正文由 Vditor 驱动，所有内容保存在本机。修改后点击窗口底部的「保存设置」。</p></header>
+    <form id="preferences">
+      <fieldset><legend>便签与墙面</legend><div class="grid">
+        <label>墙面背景<select name="background"><option value="0">米色点阵</option><option value="1">暖米白</option><option value="2">浅鼠尾草绿</option><option value="3">晨雾蓝</option></select></label>
+        <label>默认纸色<select name="default_paper" id="paper-options"></select></label>
+        <label class="check"><input name="scroll_wall" type="checkbox">允许滚动墙面</label>
+        <label class="check"><input name="paper_texture" type="checkbox">显示纸张纹理</label>
+      </div></fieldset>
+      <fieldset><legend>正文编辑</legend><div class="grid">
+        <label>默认编辑模式<select name="mode"><option value="ir">即时渲染 · 边写边排版</option><option value="wysiwyg">所见即所得 · 富文本</option><option value="sv">Markdown 源码 · 分屏预览</option></select></label>
+        <label>编辑器主题<select name="theme"><option value="classic">浅色纸面</option><option value="dark">深色书写</option></select></label>
+        <label>正文字体<select name="font"><option value="sans">无衬线 · 微软雅黑</option><option value="serif">衬线 · 宋体</option><option value="mono">等宽 · Consolas</option></select></label>
+        <label>字号<select name="font_size"><option>12</option><option>14</option><option>16</option><option>18</option><option>20</option><option>24</option><option>28</option></select></label>
+        <label>行高<select name="line_height"><option value="1.4">紧凑 · 1.4</option><option value="1.6">适中 · 1.6</option><option value="1.8">舒展 · 1.8</option><option value="2">宽松 · 2.0</option><option value="2.4">宽阔 · 2.4</option></select></label>
+        <label>正文最大宽度<select name="content_width"><option value="640">640 px · 窄版</option><option value="800">800 px · 标准</option><option value="1000">1000 px · 宽版</option><option value="1200">1200 px · 超宽</option><option value="1600">1600 px · 全幅</option></select></label>
+        <label>代码配色<select name="code_theme"><option value="github">GitHub 浅色</option><option value="monokai">Monokai</option><option value="atom-one-dark">Atom One Dark</option></select></label>
+        <label>自动保存延迟<select name="autosave_ms"><option value="300">0.3 秒</option><option value="650">0.65 秒</option><option value="1000">1 秒</option><option value="2000">2 秒</option><option value="5000">5 秒</option></select></label>
+        <label class="check"><input name="outline" type="checkbox">默认显示文章大纲</label>
+        <label class="check"><input name="counter" type="checkbox">显示字数统计</label>
+        <label class="check"><input name="markdown_shortcuts" type="checkbox">启用 Markdown 格式快捷键</label>
+      </div><p class="help">支持表格、任务列表、代码高亮、公式、撤销重做与图片粘贴 / 拖放。Ctrl+S 立即保存；Esc 返回短句。远程图片与外部脚本不会自动联网加载。</p></fieldset>
+      <button type="button" id="reset">恢复正文编辑默认设置</button>
+    </form>
+  </main>
+  <script id="vditorIconScript" src="/vditor/dist/js/icons/ant.js"></script>
+  <script src="/vditor/dist/index.min.js"></script>
+  <script src="/editor.js"></script>
+</body>
+</html>

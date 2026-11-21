@@ -1,0 +1,16 @@
+pub const BRAND: &str = "E-Sticker";
+pub const BRAND_ZH: &str = "电子便签";
+pub const WINDOW_TITLE: &str = "E-Sticker · 电子便签";
+pub const TAGLINE: &str = "Your thoughts, on your wall.";
+pub const SHELL: u32 = 0xf7f4ed;
+pub const WHITE: u32 = 0xfffefa;
+pub const ACCENT: u32 = 0x496653;
+pub const INK: u32 = 0x39362f;
+pub const MUTED: u32 = 0x92897d;
+pub const SECONDARY: u32 = 0x736a5e;
+pub const BORDER: u32 = 0xe6ded1;
+pub const SOFT: u32 = 0xe8efe8;
+pub const WALL: u32 = 0xede8de;
+pub const BUTTON_RADIUS: i32 = 6;
+pub const CARD_RADIUS: i32 = 10;
+pub const PANEL_RADIUS: i32 = 14;

@@ -1,0 +1,9 @@
+{
+  "name": "e-sticker-editor-assets",
+  "private": true,
+  "version": "0.2.8",
+  "description": "Pinned offline assets for the native E-Sticker Markdown editor",
+  "dependencies": {
+    "vditor": "4.0.1"
+  }
+}

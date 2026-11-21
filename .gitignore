@@ -1,5 +1,8 @@
 # Rust 构建产物（保留 Cargo.lock）
 /target/
+/artifacts/
+/tmp-gui-data*/
+__pycache__/
 *.exe
 *.pdb
 
@@ -23,3 +26,5 @@ wall.tmp
 Thumbs.db
 Desktop.ini
 .DS_Store
+/node_modules/
+/dist/
