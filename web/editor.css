@@ -15,10 +15,21 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background:
   #print-content tr, #print-content img { break-inside: avoid; }
   #print-content h1, #print-content h2, #print-content h3 { break-after: avoid; }
 }
-.vditor { border: 1px solid #dedfd5; border-radius: 9px; --panel-background-color: #f4f4ec; --toolbar-background-color: #f4f4ec; --toolbar-icon-hover-color: #526f5a; }
-.vditor-toolbar { padding: 7px 12px !important; border-bottom: 1px solid #dedfd5; }
+.vditor { border: 1px solid #dedfd5; border-radius: 9px; --panel-background-color: #fffefa; --toolbar-background-color: #f4f4ec; --toolbar-icon-color: #667163; --toolbar-icon-hover-color: #496653; --panel-shadow: 0 8px 28px #39362f18, 0 2px 6px #39362f0c; --control-border: #dedfd5; --control-hover: #e8efe8; --tooltip-background: #3f5346; }
+.vditor--dark { --panel-background-color: #272e2a; --toolbar-background-color: #222923; --toolbar-icon-color: #c2ccbf; --toolbar-icon-hover-color: #e2eddf; --control-border: #465044; --control-hover: #374737; --tooltip-background: #3f5346; border-color: #465044; }
+.vditor-toolbar { padding: 7px 12px !important; border-bottom: 1px solid var(--control-border); border-radius: 8px 8px 0 0; }
+.vditor-toolbar > .vditor-toolbar__item > button { border-radius: 5px; }
+.vditor-toolbar > .vditor-toolbar__item > button:hover, .vditor-toolbar > .vditor-toolbar__item > button:focus-visible { background: var(--control-hover); }
+.vditor-hint, .vditor-panel { padding: 6px; border: 1px solid var(--control-border); border-radius: 9px; box-shadow: var(--panel-shadow); }
+.vditor-hint button { padding: 7px 11px; border-radius: 5px; font-family: "Microsoft YaHei UI", sans-serif; font-size: 12px; }
+.vditor-hint button:not(.vditor-menu--disabled):hover, .vditor-hint button:focus-visible, .vditor-hint--current { background: var(--control-hover) !important; color: var(--toolbar-icon-hover-color) !important; }
+.vditor-tooltipped::after { padding: 7px 10px; border-radius: 6px; background: var(--tooltip-background, #3f5346); box-shadow: 0 3px 10px #28392d20; font-family: "Microsoft YaHei UI", sans-serif; font-size: 12px; line-height: 18px; }
+.vditor-tooltipped__s::before, .vditor-tooltipped__se::before, .vditor-tooltipped__sw::before { border-bottom-color: var(--tooltip-background, #3f5346); }
+.vditor-tooltipped__n::before, .vditor-tooltipped__ne::before, .vditor-tooltipped__nw::before { border-top-color: var(--tooltip-background, #3f5346); }
+.vditor-toolbar__item:has(> .vditor-hint[style*="display: block"]) > .vditor-tooltipped::before, .vditor-toolbar__item:has(> .vditor-hint[style*="display: block"]) > .vditor-tooltipped::after { display: none; }
 .vditor-tip { pointer-events: none; }
-.vditor-tip__close { pointer-events: auto; }
+.vditor-tip > div { max-width: min(520px, calc(100% - 32px)); padding: 12px 36px 12px 16px; border: 1px solid var(--control-border); border-radius: 9px; background: var(--panel-background-color); color: var(--toolbar-icon-hover-color); box-shadow: var(--panel-shadow); font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; text-align: left; }
+.vditor-tip__close { pointer-events: auto; color: var(--toolbar-icon-color); }
 .vditor-reset { font-family: var(--editor-font, "Microsoft YaHei UI", sans-serif) !important; line-height: var(--editor-line-height, 1.8) !important; font-size: var(--editor-font-size, 16px); }
 .vditor-reset pre, .vditor-reset code { font-family: Consolas, "Microsoft YaHei UI", monospace; }
 .vditor-outline { max-width: 210px; }
@@ -30,10 +41,24 @@ fieldset { border: 0; border-top: 1px solid #dddfd2; padding: 18px 0 8px; margin
 legend { padding: 0 12px 0 0; font-size: 15px; font-weight: 600; }
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; }
 label { display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
-select { width: 100%; min-height: 36px; padding: 5px 10px; border: 1px solid #d4d9cb; border-radius: 6px; background: white; color: var(--ink); font: inherit; }
+select { appearance: none; width: 100%; min-height: 40px; padding: 8px 36px 8px 12px; border: 1px solid #d9dfd1; border-radius: 7px; background-color: #fffefa; background-image: linear-gradient(45deg, transparent 50%, #73796f 50%), linear-gradient(135deg, #73796f 50%, transparent 50%); background-position: calc(100% - 18px) 17px, calc(100% - 14px) 17px; background-size: 4px 4px; background-repeat: no-repeat; color: var(--ink); font: inherit; cursor: pointer; }
+select:hover { border-color: #a8b6a2; }
+select:focus-visible { border-color: var(--accent); outline: 2px solid #526f5a25; outline-offset: 1px; }
+@supports (appearance: base-select) {
+  select, select::picker(select) { appearance: base-select; }
+  select { background-image: none; padding-right: 12px; align-items: center; }
+  select::picker-icon { color: var(--muted); font-size: 11px; }
+  select:open::picker-icon { rotate: 180deg; }
+  select::picker(select) { margin-top: 5px; padding: 5px; border: 1px solid #d9dfd1; border-radius: 9px; background: #fffefa; box-shadow: 0 8px 28px #39362f18; }
+  select option { min-height: 34px; padding: 8px 10px; border-radius: 5px; font-size: 12px; color: var(--ink); }
+  select option:hover, select option:focus, select option:checked { background: #e8efe8; color: var(--accent); }
+  select option:focus-visible { outline: none; }
+  select option::checkmark { color: var(--accent); order: 1; margin-left: auto; }
+}
 .check { flex-direction: row; align-items: center; gap: 8px; min-height: 30px; }
 input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; }
 .help { margin-top: 18px; }
 button { border: 1px solid #c4cebd; border-radius: 6px; padding: 9px 14px; background: #edf1e8; color: var(--accent); cursor: pointer; font: inherit; font-size: 12px; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media (max-width: 520px) { .grid { grid-template-columns: 1fr; } #settings { padding: 16px; } }
+@media (prefers-reduced-motion: reduce) { .vditor-tooltipped::before, .vditor-tooltipped::after { animation: none !important; opacity: 1; } }

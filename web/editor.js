@@ -172,6 +172,14 @@
           ready = true;
           baseline = value();
           document.querySelectorAll(".vditor-reset").forEach(element => element.style.fontSize = settings.font_size + "px");
+          for (const name of ["list", "ordered-list", "check"]) {
+            document.querySelector(`#editor button[data-type="${name}"]`).addEventListener("click", () => {
+              if (editor.vditor.currentMode !== "sv") return;
+              const field = editor.vditor.sv.element;
+              field.setSelectionRange(field.selectionEnd, field.selectionEnd);
+              field.focus();
+            });
+          }
           post("loaded");
           if (pendingFlush) flush();
           editor.focus();
@@ -196,6 +204,31 @@
   document.addEventListener("compositionend", () => { composing = false; setTimeout(() => { emit(); if (pendingFlush) flush(); }, 0); });
   document.addEventListener("keydown", event => {
     if (!preferences) return;
+    if (event.key === "Enter" && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && !event.isComposing && !composing && event.keyCode !== 229 && event.target.matches("textarea.vditor-sv")) {
+      const field = event.target;
+      const change = EStickerMarkdown.listBreak(field.value, field.selectionStart, field.selectionEnd);
+      if (change) {
+        event.preventDefault(); event.stopImmediatePropagation();
+        const engine = editor.vditor;
+        clearTimeout(engine.sv.processTimeoutId);
+        engine.undo.addToUndoStack(engine);
+        field.setSelectionRange(change.start, change.end);
+        editor.insertValue(change.text);
+        clearTimeout(engine.sv.processTimeoutId);
+        engine.undo.addToUndoStack(engine);
+        return;
+      }
+    }
+    if (event.key === "Escape" && !event.isComposing && !composing) {
+      const panels = [...document.querySelectorAll('#editor .vditor-hint')].filter(panel => panel.getClientRects().length && getComputedStyle(panel).display !== "none");
+      if (panels.length) {
+        event.preventDefault(); event.stopImmediatePropagation();
+        panels.forEach(panel => panel.style.display = "none");
+        panels[0].parentElement.querySelector("button[data-type]")?.focus();
+        return;
+      }
+      if (event.target.closest("select")) return;
+    }
     if (!preferences.markdown_shortcuts && event.ctrlKey && ["b", "i", "k"].includes(event.key.toLowerCase())) {
       event.preventDefault(); event.stopImmediatePropagation(); return;
     }

@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -8,7 +9,8 @@ import tempfile
 import time
 from PIL import Image
 
-from native_qa import Application, dismiss_dialog, post, visible, window_text
+from native_qa import Application, dismiss_dialog, foreground, post, visible, window_text
+from multiwall_qa import select_menu_item
 
 
 def browser(*arguments):
@@ -73,7 +75,7 @@ def main():
     def passed(name):
         results.append(name)
         print("PASS:", name, flush=True)
-        (run / "results.json").write_text(json.dumps({"executable": str(Path(arguments.exe).resolve()), "passed": results}, ensure_ascii=False, indent=2), encoding="utf-8")
+        (run / "results.json").write_text(json.dumps({"executable": str(Path(arguments.exe).resolve()), "sha256": hashlib.sha256(Path(arguments.exe).read_bytes()).hexdigest(), "passed": results}, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def wall():
         return json.loads((data / "wall.json").read_text(encoding="utf-8"))
@@ -100,6 +102,13 @@ def main():
         assert wall()["notes"][0]["tags"] == fixture["notes"][0]["tags"]
         passed("real editor input autosaves Unicode text without changing note position or tags")
         return_to_wall()
+        foreground(application.hwnd)
+        application.click(154)
+        select_menu_item(application, 0)
+        wait_for(lambda: visible(application.child(155)), "Wall naming form did not open")
+        application.type(155, "编辑中的分类")
+        application.click(156)
+        application.select_combo(153, 0)
         application.click(101)
         application.type(105, "原生墙面仍然可以亲手落贴")
         application.type(149, "回归, native")
@@ -181,6 +190,28 @@ def main():
         application.check_layout()
         browser("screenshot", str(run / "04-minimum.png"))
         passed("the native controls and hosted editor remain usable at the minimum window size")
+        live_marker = "移动前刚输入的正文也不能丢失🙂"
+        browser("fill", "textarea.vditor-sv", "# 分类移动\n\n" + live_marker)
+        foreground(application.hwnd)
+        application.click(159)
+        select_menu_item(application, 1)
+        wait_for(lambda: wall()["notes"][0]["wall_id"] == wall()["walls"][0]["id"], "Live article did not move into category")
+        assert live_marker in wall()["notes"][0]["body"]
+        assert wall()["notes"][0]["at"] == fixture["notes"][0]["at"]
+        application.select_combo(153, 1)
+        application.point(120, 250)
+        application.click(120)
+        wait_for(lambda: live_marker in (evaluate("document.querySelector('textarea.vditor-sv')?.value") or ""), "Category editor did not show the same saved article")
+        application.click(159)
+        select_menu_item(application, 0)
+        wait_for(lambda: wall()["notes"][0]["wall_id"] == 0, "Live article did not return to default category")
+        assert len(wall()["notes"]) == 2
+        assert live_marker in wall()["notes"][0]["body"]
+        passed("moving a live Markdown article flushes pending input, shares content with category editor and never duplicates it")
+        application.select_combo(153, 0)
+        application.point(160, 300)
+        application.click(120)
+        wait_for(lambda: evaluate("!!document.querySelector('textarea.vditor-sv')"), "Editor did not reopen before close test")
         browser("fill", "textarea.vditor-sv", "# 最后一笔\n\n关闭前立即输入，也不能丢稿。")
         post(application.hwnd, 0x0010, 0, 0)
         application.process.wait(timeout=15)

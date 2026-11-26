@@ -25,6 +25,381 @@ impl Drop for Directory {
     }
 }
 
+fn canvas_snapshot(wall: &Wall, wall_id: u64) -> Vec<(u64, i32, i32)> {
+    wall.canvas_notes(wall_id)
+        .into_iter()
+        .map(|note| {
+            let at = note.position(wall_id);
+            (note.id, at.x, at.y)
+        })
+        .collect()
+}
+
+#[test]
+fn multiwall_lifecycle_returns_restored_articles_to_default_without_duplication() {
+    let mut wall = Wall::default();
+    let work = wall.create_wall("工作").unwrap();
+    let study = wall.create_wall("学习").unwrap();
+    let id = wall
+        .place_in(
+            Draft {
+                title: "剪辑笔记".into(),
+                body: "# 原文🙂".into(),
+                tags: vec!["项目".into()],
+                ..Draft::default()
+            },
+            Point { x: 140, y: 110 },
+            DEFAULT_WALL,
+        )
+        .unwrap();
+    let original_at = wall.notes[0].at;
+    wall.assign_wall(id, work).unwrap();
+    assert_eq!(wall.notes.len(), 1);
+    assert_eq!(canvas_snapshot(&wall, DEFAULT_WALL), vec![(id, 140, 110)]);
+    assert_eq!(wall.canvas_notes(work)[0].id, id);
+    assert!(wall.canvas_notes(study).is_empty());
+    wall.set_archived(id, true);
+    assert_eq!(wall.delete_wall(work).unwrap(), 1);
+    assert!(wall.canvas_notes(DEFAULT_WALL).is_empty());
+    assert_eq!(wall.rows_in("", Sort::Edited, 2)[0].id, id);
+    assert!(wall.assign_wall(id, study).is_err());
+    wall.set_deleted(id, false);
+    assert_eq!(wall.notes[0].wall_id, DEFAULT_WALL);
+    assert!(!wall.notes[0].archived);
+    assert_eq!(
+        (wall.notes[0].at.x, wall.notes[0].at.y),
+        (original_at.x, original_at.y)
+    );
+    assert_eq!(wall.notes[0].body, "# 原文🙂");
+    assert_eq!(wall.notes[0].tags, vec!["项目"]);
+    assert!(wall.walls.iter().all(|item| item.id != work));
+    wall.assign_wall(id, study).unwrap();
+    assert_eq!(wall.notes.len(), 1);
+    assert_eq!(wall.canvas_notes(study)[0].id, id);
+    assert_eq!(wall.canvas_notes(DEFAULT_WALL)[0].id, id);
+    wall.assign_wall(id, DEFAULT_WALL).unwrap();
+    assert!(wall.canvas_notes(study).is_empty());
+    assert_eq!(wall.canvas_notes(DEFAULT_WALL).len(), 1);
+}
+
+#[test]
+fn home_and_category_positions_and_layers_are_independent() {
+    let mut wall = Wall::default();
+    let category = wall.create_wall("剪辑").unwrap();
+    for title in ["底层", "上层"] {
+        wall.place_in(
+            Draft {
+                title: title.into(),
+                ..Draft::default()
+            },
+            Point { x: 50, y: 60 },
+            category,
+        )
+        .unwrap();
+    }
+    let home = canvas_snapshot(&wall, DEFAULT_WALL);
+    wall.move_in(1, Point { x: 210, y: 160 }, category);
+    assert_eq!(canvas_snapshot(&wall, DEFAULT_WALL), home);
+    assert_eq!(
+        canvas_snapshot(&wall, category)
+            .iter()
+            .map(|item| item.0)
+            .collect::<Vec<_>>(),
+        vec![2, 1]
+    );
+    let classified = canvas_snapshot(&wall, category);
+    wall.move_in(1, Point { x: 400, y: 300 }, DEFAULT_WALL);
+    wall.move_in(2, Point { x: 400, y: 300 }, DEFAULT_WALL);
+    assert_eq!(canvas_snapshot(&wall, category), classified);
+    assert_eq!(
+        wall.hit_in(Point { x: 450, y: 350 }, DEFAULT_WALL)
+            .unwrap()
+            .id,
+        2
+    );
+    assert_eq!(
+        wall.hit_in(Point { x: 220, y: 170 }, category).unwrap().id,
+        1
+    );
+}
+
+#[test]
+fn creating_in_category_adds_only_one_home_card_and_never_reflows_existing_layouts() {
+    let mut wall = Wall::default();
+    let category = wall.create_wall("项目").unwrap();
+    for index in 0..12 {
+        let before_home = canvas_snapshot(&wall, DEFAULT_WALL);
+        let before_category = canvas_snapshot(&wall, category);
+        let at = Point {
+            x: index * 21,
+            y: index * 17,
+        };
+        let id = wall.place_in(Draft::default(), at, category).unwrap();
+        assert_eq!(
+            &canvas_snapshot(&wall, DEFAULT_WALL)[..index as usize],
+            before_home
+        );
+        assert_eq!(
+            &canvas_snapshot(&wall, category)[..index as usize],
+            before_category
+        );
+        let note = wall.notes.iter().find(|note| note.id == id).unwrap();
+        assert_eq!((note.wall_at.x, note.wall_at.y), (at.x, at.y));
+        assert!((-4..=4).contains(&note.home_tilt));
+    }
+    let positions: std::collections::HashSet<_> = wall
+        .notes
+        .iter()
+        .map(|note| (note.at.x, note.at.y))
+        .collect();
+    assert!(positions.len() > 8);
+    assert_eq!(wall.notes.len(), 12);
+}
+
+#[test]
+fn global_and_default_category_search_and_sort_do_not_mutate_either_layout() {
+    let mut wall = Wall::default();
+    let category = wall.create_wall("学习").unwrap();
+    wall.place(
+        Draft {
+            title: "Beta".into(),
+            body: "完全被盖住的正文 needle".into(),
+            ..Draft::default()
+        },
+        Point { x: 50, y: 50 },
+    );
+    wall.place_in(
+        Draft {
+            title: "Alpha".into(),
+            tags: vec!["Work".into()],
+            ..Draft::default()
+        },
+        Point { x: 50, y: 50 },
+        category,
+    )
+    .unwrap();
+    let before = serde_json::to_value(&wall.notes).unwrap();
+    assert_eq!(
+        wall.rows_in_category("", "", Sort::Title, 0, None)
+            .iter()
+            .map(|note| note.id)
+            .collect::<Vec<_>>(),
+        vec![2, 1]
+    );
+    assert_eq!(
+        wall.rows_in_category("needle", "", Sort::Edited, 0, None)[0].id,
+        1
+    );
+    assert_eq!(
+        wall.rows_in_category("", "work", Sort::Created, 0, Some(category))[0].id,
+        2
+    );
+    assert_eq!(
+        wall.rows_in_category("", "", Sort::Title, 0, Some(DEFAULT_WALL))[0].id,
+        1
+    );
+    assert!(
+        wall.rows_in_category("needle", "", Sort::Title, 0, Some(category))
+            .is_empty()
+    );
+    assert_eq!(serde_json::to_value(&wall.notes).unwrap(), before);
+}
+
+#[test]
+fn multiwall_round_trip_preserves_both_layouts_and_category_metadata() {
+    let directory = Directory::new();
+    let path = directory.file("wall.json");
+    let mut wall = Wall::default();
+    let category = wall.create_wall("视频项目").unwrap();
+    wall.place_in(Draft::default(), Point { x: 750, y: 900 }, category)
+        .unwrap();
+    wall.move_in(1, Point { x: 1200, y: 1500 }, DEFAULT_WALL);
+    wall.rename_wall(category, "剪辑项目").unwrap();
+    wall.save(&path).unwrap();
+    let reopened = Wall::open(&path).unwrap();
+    assert_eq!(reopened.wall_name(category), "剪辑项目");
+    assert_eq!(
+        serde_json::to_value(&reopened.notes).unwrap(),
+        serde_json::to_value(&wall.notes).unwrap()
+    );
+    assert_eq!(
+        canvas_snapshot(&reopened, category),
+        canvas_snapshot(&wall, category)
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&fs::read(path).unwrap()).unwrap()["version"],
+        3
+    );
+}
+
+#[test]
+fn legacy_migration_preserves_original_bytes_in_backup_and_does_not_shuffle_notes() {
+    for version in [1, 2] {
+        let directory = Directory::new();
+        let path = directory.file("wall.json");
+        let source = format!(
+            r#"{{"version":{version},"notes":[{{"id":8,"title":"旧笔记🙂","body":"原文","at":{{"x":320,"y":220}},"tags":["保留"]}},{{"id":3,"title":"另一篇","at":{{"x":40,"y":50}}}}]}}"#
+        );
+        fs::write(&path, &source).unwrap();
+        let mut wall = Wall::open(&path).unwrap();
+        assert!(wall.walls.is_empty());
+        assert_eq!(
+            canvas_snapshot(&wall, DEFAULT_WALL),
+            vec![(8, 320, 220), (3, 40, 50)]
+        );
+        assert!(
+            wall.notes
+                .iter()
+                .all(|note| note.wall_id == DEFAULT_WALL && note.home_tilt == 0)
+        );
+        wall.create_wall("新分类").unwrap();
+        wall.save(&path).unwrap();
+        let backup = path.with_extension(format!("v{version}.bak"));
+        assert_eq!(fs::read_to_string(&backup).unwrap(), source);
+        wall.notes[0].body = "后续修改".into();
+        wall.save(&path).unwrap();
+        assert_eq!(fs::read_to_string(backup).unwrap(), source);
+        assert_eq!(Wall::open(&path).unwrap().notes[0].tags, vec!["保留"]);
+    }
+}
+
+#[test]
+fn wall_names_and_default_protection_are_enforced_without_mutation_on_error() {
+    let mut wall = Wall::default();
+    let id = wall.create_wall("  Work  ").unwrap();
+    assert_eq!(wall.wall_name(id), "Work");
+    for name in ["", "  ", "work", "含\n换行"] {
+        assert!(wall.create_wall(name).is_err());
+    }
+    assert!(wall.create_wall(&"墙".repeat(33)).is_err());
+    assert!(wall.delete_wall(DEFAULT_WALL).is_err());
+    assert!(wall.rename_wall(DEFAULT_WALL, "首页").is_err());
+    assert!(wall.assign_wall(99, id).is_err());
+    assert!(
+        wall.place_in(Draft::default(), Point::default(), 999)
+            .is_err()
+    );
+    assert_eq!(wall.walls.len(), 1);
+    assert!(wall.notes.is_empty());
+    wall.rename_wall(id, "Work").unwrap();
+}
+
+#[test]
+fn deleting_one_wall_moves_all_its_articles_to_trash_but_leaves_other_layouts_unchanged() {
+    let mut wall = Wall::default();
+    let first = wall.create_wall("第一面").unwrap();
+    let second = wall.create_wall("第二面").unwrap();
+    for category in [first, first, first, second, DEFAULT_WALL] {
+        wall.place_in(Draft::default(), Point { x: 40, y: 60 }, category)
+            .unwrap();
+    }
+    wall.set_archived(2, true);
+    wall.set_deleted(3, true);
+    let other = serde_json::to_value(&wall.notes[3..]).unwrap();
+    assert_eq!(wall.delete_wall(first).unwrap(), 2);
+    assert_eq!(serde_json::to_value(&wall.notes[3..]).unwrap(), other);
+    assert_eq!(wall.rows_in("", Sort::Edited, 2).len(), 3);
+    assert_eq!(wall.canvas_notes(DEFAULT_WALL).len(), 2);
+    assert_eq!(wall.walls.len(), 1);
+    for id in [1, 2, 3] {
+        wall.set_deleted(id, false);
+        assert_eq!(
+            wall.notes
+                .iter()
+                .find(|note| note.id == id)
+                .unwrap()
+                .wall_id,
+            DEFAULT_WALL
+        );
+    }
+    assert_eq!(wall.canvas_notes(DEFAULT_WALL).len(), 5);
+    assert_eq!(wall.walls.len(), 1);
+}
+
+#[test]
+fn invalid_v3_category_references_are_rejected_without_touching_the_file() {
+    let directory = Directory::new();
+    let path = directory.file("wall.json");
+    for source in [
+        r#"{"version":3,"walls":[],"notes":[{"id":1,"wall_id":7}]}"#,
+        r#"{"version":3,"walls":[{"id":0,"name":"默认"}],"notes":[]}"#,
+        r#"{"version":3,"walls":[{"id":1,"name":"A"},{"id":1,"name":"B"}],"notes":[]}"#,
+        r#"{"version":3,"walls":[{"id":1,"name":"A"},{"id":2,"name":"a"}],"notes":[]}"#,
+    ] {
+        fs::write(&path, source).unwrap();
+        assert!(Wall::open(&path).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), source);
+    }
+}
+
+#[test]
+fn restoring_a_single_article_does_not_rejoin_its_still_existing_category() {
+    let mut wall = Wall::default();
+    let category = wall.create_wall("保留的分类").unwrap();
+    wall.place_in(Draft::default(), Point::default(), category)
+        .unwrap();
+    wall.set_deleted(1, false);
+    assert_eq!(wall.notes[0].wall_id, category);
+    wall.set_deleted(1, true);
+    wall.set_deleted(1, false);
+    assert_eq!(wall.notes[0].wall_id, DEFAULT_WALL);
+    assert!(wall.canvas_notes(category).is_empty());
+    assert_eq!(wall.walls.len(), 1);
+}
+
+#[test]
+fn category_layer_allocation_preserves_order_when_imported_order_overflows() {
+    let mut wall = Wall::default();
+    let category = wall.create_wall("分层").unwrap();
+    wall.place_in(Draft::default(), Point::default(), category)
+        .unwrap();
+    wall.place_in(Draft::default(), Point::default(), category)
+        .unwrap();
+    wall.notes[0].wall_order = u64::MAX;
+    let before = canvas_snapshot(&wall, category);
+    let home = canvas_snapshot(&wall, DEFAULT_WALL);
+    assert!(wall.assign_wall(999, category).is_err());
+    assert_eq!(wall.notes[0].wall_order, u64::MAX);
+    wall.place_in(Draft::default(), Point::default(), category)
+        .unwrap();
+    assert_eq!(&canvas_snapshot(&wall, category)[..2], before);
+    assert_eq!(wall.canvas_notes(category).last().unwrap().id, 3);
+    assert_eq!(&canvas_snapshot(&wall, DEFAULT_WALL)[..2], home);
+}
+
+#[test]
+fn failed_legacy_backup_prevents_migration_and_preserves_source() {
+    let directory = Directory::new();
+    let path = directory.file("wall.json");
+    let source = r#"{"version":2,"notes":[{"id":1,"title":"保留原文"}]}"#;
+    fs::write(&path, source).unwrap();
+    let mut wall = Wall::open(&path).unwrap();
+    wall.create_wall("不能丢数据").unwrap();
+    fs::create_dir(path.with_extension("v2.bak")).unwrap();
+    assert!(wall.save(&path).is_err());
+    assert_eq!(fs::read_to_string(&path).unwrap(), source);
+    fs::remove_dir(path.with_extension("v2.bak")).unwrap();
+    wall.save(&path).unwrap();
+    assert_eq!(
+        fs::read_to_string(path.with_extension("v2.bak")).unwrap(),
+        source
+    );
+}
+
+#[test]
+fn tilted_home_hit_testing_matches_rotation_while_category_remains_straight() {
+    let note = Note {
+        at: Point { x: 100, y: 100 },
+        wall_at: Point { x: 300, y: 300 },
+        home_tilt: 5,
+        ..Note::default()
+    };
+    assert!(note.contains(Point { x: 180, y: 160 }, DEFAULT_WALL));
+    assert!(!note.contains(Point { x: 100, y: 100 }, DEFAULT_WALL));
+    assert!(note.contains(Point { x: 300, y: 300 }, 1));
+    assert!(!note.contains(Point { x: 180, y: 160 }, 1));
+}
+
 fn note(id: u64, title: &str) -> Note {
     Note {
         id,
@@ -68,6 +443,7 @@ fn failed_save_preserves_existing_file() {
     let path = directory.file("wall.json");
     let mut wall = Wall {
         notes: vec![note(1, "original")],
+        ..Wall::default()
     };
     wall.save(&path).unwrap();
     let original = fs::read(&path).unwrap();
@@ -99,7 +475,7 @@ fn corrupt_or_future_data_is_not_silently_replaced() {
     let path = directory.file("wall.json");
     for contents in [
         "{broken",
-        r#"{"version":3,"notes":[]}"#,
+        r#"{"version":4,"notes":[]}"#,
         r#"{"version":2,"notes":[{"id":1},{"id":1}]}"#,
         r#"{"version":2,"notes":[{"id":18446744073709551615}]}"#,
     ] {
@@ -129,6 +505,7 @@ fn imported_geometry_is_bounded() {
 fn id_allocation_does_not_overflow_imported_ids() {
     let mut wall = Wall {
         notes: vec![note(u64::MAX - 1, "imported")],
+        ..Wall::default()
     };
     wall.place(Draft::default(), Point::default());
     assert_eq!(wall.notes[1].id, 1);
@@ -138,6 +515,7 @@ fn id_allocation_does_not_overflow_imported_ids() {
 fn hit_testing_respects_layering_archive_and_trash() {
     let mut wall = Wall {
         notes: vec![note(1, "bottom"), note(2, "top")],
+        ..Wall::default()
     };
     let point = Point { x: 21, y: 31 };
     assert_eq!(wall.hit(point).unwrap().id, 2);
@@ -155,6 +533,7 @@ fn hit_testing_respects_layering_archive_and_trash() {
 fn search_sort_and_buckets_preserve_wall_order_and_positions() {
     let mut wall = Wall {
         notes: vec![note(1, "Alpha"), note(2, "Beta"), note(3, "Gamma")],
+        ..Wall::default()
     };
     wall.notes[0].body = "Only BODY contains 复盘".into();
     wall.notes[1].tags = vec!["标签".into()];
@@ -176,6 +555,41 @@ fn search_sort_and_buckets_preserve_wall_order_and_positions() {
     assert_eq!(wall.rows_in("", Sort::Edited, 0)[0].id, 3);
     assert_eq!(wall.rows_in("", Sort::Edited, 1)[0].id, 1);
     assert_eq!(wall.rows_in("", Sort::Edited, 2)[0].id, 2);
+}
+
+#[test]
+fn time_sort_uses_the_selected_clock_with_pins_and_stable_ties() {
+    let mut wall = Wall {
+        notes: vec![
+            note(1, "old creation"),
+            note(2, "new creation"),
+            note(3, "same edit"),
+            note(4, "pinned"),
+        ],
+        ..Wall::default()
+    };
+    for item in &mut wall.notes {
+        item.created = 100;
+        item.edited = 100;
+    }
+    wall.notes[0].edited = 300;
+    wall.notes[1].created = 200;
+    wall.notes[2].edited = 300;
+    wall.notes[3].pinned = true;
+    let original = serde_json::to_value(&wall.notes).unwrap();
+    for (sort, expected) in [
+        (Sort::Edited, vec![4, 3, 1, 2]),
+        (Sort::Created, vec![4, 2, 3, 1]),
+    ] {
+        assert_eq!(
+            wall.rows_in("", sort, 0)
+                .iter()
+                .map(|item| item.id)
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+    assert_eq!(serde_json::to_value(&wall.notes).unwrap(), original);
 }
 
 #[test]
@@ -205,6 +619,7 @@ fn tags_parse_separators_deduplicate_case_insensitively_and_enforce_limits() {
 fn tag_filter_is_case_insensitive_and_does_not_reorder_wall_data() {
     let mut wall = Wall {
         notes: vec![note(1, "Alpha"), note(2, "Beta"), note(3, "Gamma")],
+        ..Wall::default()
     };
     wall.notes[0].tags = vec!["Work".into()];
     wall.notes[1].tags = vec!["personal".into(), "work".into()];
@@ -229,16 +644,17 @@ fn tag_filter_is_case_insensitive_and_does_not_reorder_wall_data() {
 }
 
 #[test]
-fn restoring_archived_trash_keeps_original_bucket() {
+fn restoring_archived_trash_returns_to_home_instead_of_archive() {
     let mut wall = Wall {
         notes: vec![note(1, "archive")],
+        ..Wall::default()
     };
     wall.set_archived(1, true);
     wall.set_deleted(1, true);
     assert_eq!(wall.rows_in("", Sort::Edited, 2).len(), 1);
     wall.set_deleted(1, false);
-    assert!(wall.rows_in("", Sort::Edited, 0).is_empty());
-    assert_eq!(wall.rows_in("", Sort::Edited, 1).len(), 1);
+    assert_eq!(wall.rows_in("", Sort::Edited, 0).len(), 1);
+    assert!(wall.rows_in("", Sort::Edited, 1).is_empty());
 }
 
 #[test]
@@ -377,6 +793,7 @@ fn relative_images_migrate_without_overwriting_or_leaking_on_failure() {
     fs::write(source.join("images/图片.png"), b"sample image").unwrap();
     let mut wall = Wall {
         notes: vec![note(1, "image")],
+        ..Wall::default()
     };
     wall.notes[0].body = "![图](images/图片.png)".into();
     let pending = AssetMigration::copy(&wall, &source, &target).unwrap();

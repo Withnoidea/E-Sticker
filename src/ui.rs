@@ -4,6 +4,10 @@ use crate::model::{
     self, Draft, NOTE_H, NOTE_W, Paper, Point, Preferences, Sort, WALL_H, WALL_W, Wall,
 };
 use crate::{assets, chrome, clipboard, theme::*};
+#[path = "control_ui.rs"]
+mod control_ui;
+#[path = "wall_ui.rs"]
+mod wall_ui;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
@@ -71,6 +75,14 @@ const TAGS: usize = 149;
 const TAG_FILTER: usize = 150;
 const EDITOR_SAVE: usize = 151;
 const EDITOR_CLOSE: usize = 152;
+const WALL_PICKER: usize = 153;
+const WALL_MENU: usize = 154;
+const WALL_NAME: usize = 155;
+const WALL_SAVE: usize = 156;
+const WALL_CANCEL: usize = 157;
+const CATEGORY_FILTER: usize = 158;
+const MOVE_NOTE: usize = 159;
+const BROWSE_MODE: usize = 160;
 const EDITOR_TIMEOUT: usize = 57;
 const BODY_LIMIT: usize = 100_000;
 const AUTOSAVE_TIMER: usize = 56;
@@ -106,7 +118,7 @@ const BACKGROUNDS: [(&str, u32); 4] = [
     ("晨雾蓝", 0xe9eff2),
 ];
 const BODY_TOP: i32 = TOP + 252;
-const SORT_LABELS: [&str; 3] = ["最近编辑", "创建时间", "按短句排序"];
+const SORT_LABELS: [&str; 3] = ["编辑时间 ↓", "创建时间 ↓", "短句 A–Z"];
 const MOTION_TIMER: usize = 55;
 const HOVER_MS: f64 = 150.0;
 
@@ -195,6 +207,10 @@ struct App {
     body_dirty: bool,
     tags_dirty: bool,
     wall: Wall,
+    current_wall: u64,
+    category_filter: Option<u64>,
+    wall_dialog: Option<u64>,
+    wall_offsets: BTreeMap<u64, Point>,
     controls: BTreeMap<usize, HWND>,
     fonts: [HFONT; 6],
     preview: RefCell<crate::preview::Preview>,
@@ -489,12 +505,7 @@ pub(crate) unsafe fn text(
 
 unsafe fn message(hwnd: HWND, body: &str, flags: u32) -> MESSAGEBOX_RESULT {
     let focused = GetFocus();
-    let result = MessageBoxW(
-        hwnd,
-        wide(body).as_ptr(),
-        wide(WINDOW_TITLE).as_ptr(),
-        flags,
-    );
+    let result = control_ui::notice(hwnd, body, flags);
     if !hwnd.is_null() {
         if !focused.is_null()
             && IsWindow(focused) != 0
@@ -610,11 +621,21 @@ unsafe fn draw_button(item: &DRAWITEMSTRUCT) {
 unsafe fn draw_sort(item: &DRAWITEMSTRUCT) {
     let collapsed = item.itemState & ODS_COMBOBOXEDIT != 0;
     let selected = item.itemState & ODS_SELECTED != 0;
-    fill(
-        item.hDC,
-        item.rcItem,
-        if selected && !collapsed { SOFT } else { WHITE },
-    );
+    fill(item.hDC, item.rcItem, WHITE);
+    if selected && !collapsed {
+        rounded(
+            item.hDC,
+            rect(
+                item.rcItem.left + 4,
+                item.rcItem.top + 2,
+                item.rcItem.right - 4,
+                item.rcItem.bottom - 2,
+            ),
+            5,
+            SOFT,
+            SOFT,
+        );
+    }
     let label = if item.CtlID as usize == SORT {
         SORT_LABELS
             .get(item.itemID as usize)
@@ -638,17 +659,30 @@ unsafe fn draw_sort(item: &DRAWITEMSTRUCT) {
     };
     let face = SendMessageW(item.hwndItem, WM_GETFONT, 0, 0) as HFONT;
     let mut area = item.rcItem;
-    area.left += 9;
+    area.left += 12;
+    area.right -= 28;
     text(
         item.hDC,
         face,
         &label,
         area,
         INK,
-        DT_SINGLELINE | DT_VCENTER,
+        DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
     );
-    if item.itemState & ODS_FOCUS != 0 {
-        DrawFocusRect(item.hDC, &item.rcItem);
+    if !collapsed && SendMessageW(item.hwndItem, CB_GETCURSEL, 0, 0) == item.itemID as isize {
+        text(
+            item.hDC,
+            face,
+            "✓",
+            rect(
+                item.rcItem.right - 26,
+                item.rcItem.top,
+                item.rcItem.right - 9,
+                item.rcItem.bottom,
+            ),
+            ACCENT,
+            DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+        );
     }
 }
 
@@ -817,43 +851,29 @@ impl App {
             DeleteObject(brush);
         }
         let moving = self.drag.as_ref().filter(|drag| drag.moved);
-        for note in self.wall.notes.iter().filter(|note| {
-            !note.archived && !note.deleted && !moving.is_some_and(|drag| drag.id == note.id)
-        }) {
-            let xpos = EDGE + note.at.x - self.offset.x;
-            let ypos = TOP + note.at.y - self.offset.y;
-            if xpos + NOTE_W + 8 >= wall.left
-                && xpos < wall.right
-                && ypos + NOTE_H + 8 >= wall.top
-                && ypos < wall.bottom
+        for note in self
+            .wall
+            .canvas_notes(self.current_wall)
+            .into_iter()
+            .filter(|note| {
+                !note.archived && !note.deleted && !moving.is_some_and(|drag| drag.id == note.id)
+            })
+        {
+            let at = note.position(self.current_wall);
+            let xpos = EDGE + at.x - self.offset.x;
+            let ypos = TOP + at.y - self.offset.y;
+            if xpos + note.width + 24 >= wall.left
+                && xpos - 24 < wall.right
+                && ypos + note.height + 24 >= wall.top
+                && ypos - 24 < wall.bottom
             {
-                self.paper(
-                    dc,
-                    note.at,
-                    &note.title,
-                    note.paper,
-                    false,
-                    Point {
-                        x: note.width,
-                        y: note.height,
-                    },
-                );
+                self.note_paper(dc, note, at, false);
             }
         }
         if let Some(drag) = moving
             && let Some(note) = self.wall.notes.iter().find(|note| note.id == drag.id)
         {
-            self.paper(
-                dc,
-                drag.at,
-                &note.title,
-                note.paper,
-                true,
-                Point {
-                    x: note.width,
-                    y: note.height,
-                },
-            );
+            self.note_paper(dc, note, drag.at, true);
         }
         if let Some(draft) = &self.placement
             && let Some(point) = self.hover
@@ -870,13 +890,7 @@ impl App {
                     y: NOTE_H,
                 },
             );
-        } else if !self
-            .wall
-            .notes
-            .iter()
-            .any(|note| !note.archived && !note.deleted)
-            && self.placement.is_none()
-        {
+        } else if self.wall.canvas_notes(self.current_wall).is_empty() && self.placement.is_none() {
             let middle = (wall.top + wall.bottom) / 2;
             let center = (wall.left + wall.right) / 2;
             fill(
@@ -979,28 +993,43 @@ impl App {
                     if note.pinned { "置顶 · " } else { "" },
                     note.title.replace(['\r', '\n'], " ")
                 ),
-                rect(card.left + 36, top + 12, card.right - 157, top + 38),
+                rect(card.left + 36, top + 12, card.right - 200, top + 38),
                 INK,
                 DT_SINGLELINE | DT_END_ELLIPSIS,
             );
             text(
                 dc,
                 self.fonts[3],
-                &model::date(note.edited),
-                rect(card.right - 148, top + 17, card.right - 16, top + 39),
+                &format!(
+                    "{} {}",
+                    if matches!(self.sort, Sort::Created) {
+                        "创建"
+                    } else {
+                        "编辑"
+                    },
+                    model::date(if matches!(self.sort, Sort::Created) {
+                        note.created
+                    } else {
+                        note.edited
+                    })
+                ),
+                rect(card.right - 195, top + 17, card.right - 16, top + 39),
                 MUTED,
                 DT_RIGHT | DT_SINGLELINE,
             );
-            if !note.tags.is_empty() {
+            {
                 text(
                     dc,
                     self.fonts[3],
-                    &note
-                        .tags
-                        .iter()
-                        .map(|tag| format!("#{tag}"))
-                        .collect::<Vec<_>>()
-                        .join("  "),
+                    &format!(
+                        "{}  {}",
+                        self.wall.wall_name(note.wall_id),
+                        note.tags
+                            .iter()
+                            .map(|tag| format!("#{tag}"))
+                            .collect::<Vec<_>>()
+                            .join("  ")
+                    ),
                     rect(card.left + 36, top + 39, card.right - 20, top + 55),
                     ACCENT,
                     DT_SINGLELINE | DT_END_ELLIPSIS,
@@ -1291,17 +1320,31 @@ impl App {
     unsafe fn paint(&self, dc: HDC) {
         let area = self.client();
         fill(dc, area, SHELL);
-        let count = self.wall.rows_in("", self.sort, self.bucket).len();
+        let count = if self.view_list() {
+            self.rows().len()
+        } else {
+            self.wall.canvas_notes(self.current_wall).len()
+        };
         chrome::paint(dc, area.right, self.fonts[5], self.fonts[3]);
-        text(
-            dc,
-            self.fonts[3],
-            TAGLINE,
-            rect(EDGE, 58, area.right - EDGE, 88),
-            SECONDARY,
-            DT_SINGLELINE | DT_VCENTER,
-        );
-        if self.settings.is_none() && self.editing.is_none() && self.placement.is_none() {
+        if !self.view_list()
+            || self.editing.is_some()
+            || self.settings.is_some()
+            || self.wall_dialog.is_some()
+        {
+            text(
+                dc,
+                self.fonts[3],
+                TAGLINE,
+                rect(EDGE, 58, area.right - EDGE, 88),
+                SECONDARY,
+                DT_SINGLELINE | DT_VCENTER,
+            );
+        }
+        if self.settings.is_none()
+            && self.editing.is_none()
+            && self.placement.is_none()
+            && self.wall_dialog.is_none()
+        {
             let search = self.search_area();
             rounded(
                 dc,
@@ -1330,7 +1373,9 @@ impl App {
             SelectObject(dc, previous);
             DeleteObject(pen);
         }
-        let title = if self.settings.is_some() {
+        let title = if self.wall_dialog.is_some() {
+            "管理墙面"
+        } else if self.settings.is_some() {
             "设置"
         } else if let Some(edit) = &self.editing {
             if edit.id.is_some() {
@@ -1351,14 +1396,39 @@ impl App {
         } else {
             "我的便签墙"
         };
-        text(
-            dc,
-            self.fonts[1],
-            title,
-            rect(EDGE, 104, area.right - EDGE, 144),
-            INK,
-            DT_SINGLELINE,
-        );
+        if self.wall_dialog.is_some()
+            || self.settings.is_some()
+            || self.editing.is_some()
+            || self.placement.is_some()
+        {
+            text(
+                dc,
+                self.fonts[1],
+                title,
+                rect(EDGE, 104, area.right - EDGE, 144),
+                INK,
+                DT_SINGLELINE,
+            );
+        }
+        if self.wall_dialog.is_none()
+            && self.settings.is_none()
+            && self.editing.is_none()
+            && self.placement.is_none()
+            && !self.view_list()
+        {
+            text(
+                dc,
+                self.fonts[3],
+                if self.current_wall == model::DEFAULT_WALL {
+                    "所有分类汇集于此 · 布局独立保存"
+                } else {
+                    "手动摆放 · 首页布局不受影响"
+                },
+                rect(EDGE + 342, 113, area.right - EDGE, 142),
+                SECONDARY,
+                DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+            );
+        }
         if self.placement.is_some() {
             text(
                 dc,
@@ -1369,7 +1439,9 @@ impl App {
                 DT_SINGLELINE,
             );
         }
-        if let Some(settings) = &self.settings {
+        if self.wall_dialog.is_some() {
+            self.draw_wall_dialog(dc);
+        } else if let Some(settings) = &self.settings {
             self.draw_settings(dc, settings);
         } else if let Some(edit) = &self.editing {
             self.draw_editor(dc, edit);
@@ -1378,18 +1450,20 @@ impl App {
         } else {
             self.draw_wall(dc);
         }
-        let hint = if self.settings.is_some() {
+        let hint = if self.wall_dialog.is_some() {
+            "Enter 保存墙面 · Esc 取消"
+        } else if self.settings.is_some() {
             "Esc 返回  ·  保存后生效"
         } else if self.editing.is_some() {
             "Enter 换行  ·  Ctrl+Enter 确认  ·  Esc 取消"
         } else if self.placement.is_some() {
             "移动纸张预览位置  ·  可以贴在另一张纸上"
         } else if self.view_list() {
-            "点击打开详情  ·  列表排序不影响墙面"
+            "置顶优先 · 时间由新到旧 · 列表排序不影响墙面"
         } else if self.preferences.scroll_wall {
             "单击看详情  ·  拖动移开  ·  滚轮纵向／Shift+滚轮横向"
         } else {
-            "单击看详情  ·  拖动移开"
+            "单击看详情  ·  拖动摆放  ·  右键分类"
         };
         text(
             dc,
@@ -1455,7 +1529,10 @@ unsafe extern "system" fn procedure(hwnd: HWND, event: u32, wp: WPARAM, lp: LPAR
         WM_ERASEBKGND => return 1,
         WM_DRAWITEM => {
             let item = &*(lp as *const DRAWITEMSTRUCT);
-            if matches!(item.CtlID as usize, SORT | TAG_FILTER) {
+            if matches!(
+                item.CtlID as usize,
+                SORT | TAG_FILTER | WALL_PICKER | CATEGORY_FILTER | BROWSE_MODE
+            ) {
                 draw_sort(item);
                 return 1;
             }
@@ -1466,7 +1543,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, event: u32, wp: WPARAM, lp: LPAR
         }
         WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC => {
             let id = GetDlgCtrlID(lp as HWND) as usize;
-            if matches!(id, TITLE | SEARCH | BODY | DIRECTORY | TAGS) {
+            if matches!(id, TITLE | SEARCH | BODY | DIRECTORY | TAGS | WALL_NAME) {
                 let background = if id == TITLE {
                     TITLE_BACKGROUND.with(Cell::get)
                 } else if matches!(id, BODY | TAGS) {
@@ -1544,6 +1621,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, event: u32, wp: WPARAM, lp: LPAR
             }
         }
         WM_COMMAND => with_app(|app| app.command(wp & 0xffff, (wp >> 16) as u32 & 0xffff)),
+        WM_CONTEXTMENU => with_app(|app| app.note_context(mouse(lp))),
         WM_LBUTTONDOWN => with_app(|app| app.down(mouse(lp))),
         WM_LBUTTONUP => with_app(|app| app.up(mouse(lp))),
         WM_MOUSEMOVE => with_app(|app| app.motion(mouse(lp))),
@@ -1706,10 +1784,14 @@ pub fn run() {
             if event.message == WM_KEYDOWN {
                 with_app(|app| {
                     let ctrl = GetKeyState(VK_CONTROL as i32) < 0;
-                    let combo_open = [SORT, TAG_FILTER]
+                    let combo_open = [SORT, TAG_FILTER, WALL_PICKER, CATEGORY_FILTER, BROWSE_MODE]
                         .iter()
                         .any(|id| SendMessageW(app.control(*id), CB_GETDROPPEDSTATE, 0, 0) != 0);
                     match event.wParam as u16 {
+                        VK_RETURN if app.wall_dialog.is_some() => {
+                            app.save_wall_dialog();
+                            handled = true;
+                        }
                         VK_ESCAPE if !combo_open => {
                             app.command(CANCEL, BN_CLICKED);
                             handled = true;
@@ -1763,6 +1845,7 @@ pub fn run() {
                             handled = true;
                         }
                         0x4e if ctrl
+                            && app.wall_dialog.is_none()
                             && app.settings.is_none()
                             && app.editing.is_none()
                             && app.placement.is_none() =>
@@ -1771,6 +1854,7 @@ pub fn run() {
                             handled = true;
                         }
                         0x46 if ctrl
+                            && app.wall_dialog.is_none()
                             && app.settings.is_none()
                             && app.editing.is_none()
                             && app.placement.is_none() =>
@@ -1809,6 +1893,29 @@ impl App {
         preferences: Preferences,
     ) -> Self {
         let mut definitions = vec![
+            (
+                BROWSE_MODE,
+                "COMBOBOX",
+                "",
+                (CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS) as u32 | WS_VSCROLL,
+            ),
+            (
+                WALL_PICKER,
+                "COMBOBOX",
+                "",
+                (CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS) as u32 | WS_VSCROLL,
+            ),
+            (
+                CATEGORY_FILTER,
+                "COMBOBOX",
+                "",
+                (CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS) as u32 | WS_VSCROLL,
+            ),
+            (WALL_MENU, "BUTTON", "管理墙面", BS_OWNERDRAW as u32),
+            (WALL_NAME, "EDIT", "", ES_AUTOHSCROLL as u32),
+            (WALL_SAVE, "BUTTON", "创建墙面", BS_OWNERDRAW as u32),
+            (WALL_CANCEL, "BUTTON", "取消", BS_OWNERDRAW as u32),
+            (MOVE_NOTE, "BUTTON", "移动到分类…", BS_OWNERDRAW as u32),
             (NEW, "BUTTON", "＋ 新建便签", BS_OWNERDRAW as u32),
             (VIEW, "BUTTON", "文章列表", BS_OWNERDRAW as u32),
             (SEARCH, "EDIT", "", ES_AUTOHSCROLL as u32),
@@ -1906,6 +2013,9 @@ impl App {
                 if class == "BUTTON" {
                     SetWindowSubclass(handle, Some(child_hover), 1, id);
                 }
+                if class == "COMBOBOX" {
+                    control_ui::style_combo(handle);
+                }
                 assert!(!handle.is_null(), "Unable to create control {id}");
                 (id, handle)
             })
@@ -1930,6 +2040,10 @@ impl App {
             body_dirty: false,
             tags_dirty: false,
             wall,
+            current_wall: model::DEFAULT_WALL,
+            category_filter: None,
+            wall_dialog: None,
+            wall_offsets: BTreeMap::new(),
             controls,
             fonts,
             preview: RefCell::new(crate::preview::Preview::new()),
@@ -1962,12 +2076,25 @@ impl App {
                 wide(label).as_ptr() as LPARAM,
             );
         }
-        SendMessageW(app.control(SORT), CB_SETITEMHEIGHT, 0, 29);
-        SendMessageW(app.control(SORT), CB_SETITEMHEIGHT, usize::MAX, 24);
         SendMessageW(app.control(SORT), CB_SETCURSEL, 0, 0);
-        SendMessageW(app.control(TAG_FILTER), CB_SETITEMHEIGHT, 0, 29);
-        SendMessageW(app.control(TAG_FILTER), CB_SETITEMHEIGHT, usize::MAX, 24);
         app.refresh_tag_filter();
+        app.refresh_wall_controls();
+        for name in ["文章列表", "归档文章", "回收站"] {
+            SendMessageW(
+                app.control(BROWSE_MODE),
+                CB_ADDSTRING,
+                0,
+                wide(name).as_ptr() as LPARAM,
+            );
+        }
+        SendMessageW(app.control(BROWSE_MODE), CB_SETCURSEL, 0, 0);
+        SendMessageW(app.control(WALL_NAME), EM_LIMITTEXT, 64, 0);
+        SendMessageW(
+            app.control(WALL_NAME),
+            EM_SETCUEBANNER,
+            1,
+            wide("例如：工作、学习、剪辑项目").as_ptr() as LPARAM,
+        );
         SendMessageW(app.control(TITLE), EM_LIMITTEXT, 48, 0);
         SendMessageW(app.control(TAGS), EM_LIMITTEXT, 1024, 0);
         SendMessageW(
@@ -2046,11 +2173,12 @@ impl App {
     }
 
     fn rows(&self) -> Vec<&model::Note> {
-        self.wall.rows_in_filtered(
+        self.wall.rows_in_category(
             &self.query,
             self.selected_tag.as_deref().unwrap_or_default(),
             self.sort,
             self.bucket,
+            self.category_filter,
         )
     }
 
@@ -2181,7 +2309,10 @@ impl App {
     unsafe fn layout(&self) {
         let width = self.client().right;
         let editing = self.editing.as_ref();
-        let active = self.settings.is_none() && editing.is_none() && self.placement.is_none();
+        let active = self.settings.is_none()
+            && editing.is_none()
+            && self.placement.is_none()
+            && self.wall_dialog.is_none();
         let field = self.editor_area();
         let inner = field.left + 24;
         let end = field.right - 24;
@@ -2193,6 +2324,13 @@ impl App {
             }
         };
         show(NEW, active, width - 131, 56, 109, 34);
+        show(BROWSE_MODE, active && self.view_list(), EDGE, 56, 190, 180);
+        SendMessageW(
+            self.control(BROWSE_MODE),
+            CB_SETCURSEL,
+            self.bucket as usize,
+            0,
+        );
         show(VIEW, active, width - 235, 56, 96, 34);
         show(SETTINGS, active, width - 302, 56, 58, 34);
         for id in chrome::MINIMIZE..=chrome::CLOSE {
@@ -2225,6 +2363,34 @@ impl App {
             22,
         );
         show(SORT, active && self.view_list(), width - 149, 112, 127, 190);
+        show(WALL_PICKER, active, EDGE, 112, 220, 320);
+        show(
+            WALL_MENU,
+            active && !self.view_list(),
+            EDGE + 232,
+            112,
+            94,
+            30,
+        );
+        show(
+            CATEGORY_FILTER,
+            active && self.view_list(),
+            EDGE + 230,
+            112,
+            width - EDGE - 559,
+            320,
+        );
+        let dialog = self.wall_dialog.is_some();
+        show(
+            WALL_NAME,
+            dialog,
+            inner + 8,
+            TOP + 108,
+            end - inner - 16,
+            28,
+        );
+        show(WALL_SAVE, dialog, end - 109, TOP + 176, 109, 32);
+        show(WALL_CANCEL, dialog, end - 201, TOP + 176, 82, 32);
         show(
             TAG_FILTER,
             active && self.view_list(),
@@ -2317,6 +2483,14 @@ impl App {
         );
         show(PIN, detail && self.bucket == 0, inner, action_y, 80, 30);
         show(
+            MOVE_NOTE,
+            detail && self.bucket != 2,
+            inner + 299,
+            action_y,
+            121,
+            30,
+        );
+        show(
             ARCHIVE,
             detail && self.bucket != 2,
             inner + 88,
@@ -2376,15 +2550,10 @@ impl App {
         }
         self.label(
             VIEW,
-            if !self.query.is_empty() || self.selected_tag.is_some() {
-                "\u{6e05}\u{7a7a}\u{7b5b}\u{9009}"
+            if self.view_list() {
+                "返回墙面"
             } else {
-                match (self.list, self.bucket) {
-                    (false, _) => "文章列表",
-                    (true, 0) => "归档便签 →",
-                    (true, 1) => "回收站 →",
-                    _ => "回到墙面",
-                }
+                "文章列表"
             },
         );
         self.label(
@@ -2840,10 +3009,15 @@ impl App {
     unsafe fn commit(&mut self, change: impl FnOnce(&mut Wall), notice: &str) -> bool {
         let mut next = self.wall.clone();
         change(&mut next);
+        self.store_wall(next, notice)
+    }
+
+    unsafe fn store_wall(&mut self, next: Wall, notice: &str) -> bool {
         match next.save(&self.path) {
             Ok(()) => {
                 self.wall = next;
                 self.refresh_tag_filter();
+                self.refresh_wall_controls();
                 self.status = notice.into();
                 self.redraw();
                 true
@@ -3125,7 +3299,12 @@ impl App {
     }
 
     unsafe fn cancel(&mut self) {
-        if self.settings.take().is_some() {
+        if self.wall_dialog.take().is_some() {
+            self.status.clear();
+            self.layout();
+            SetFocus(self.control(WALL_MENU));
+            self.redraw();
+        } else if self.settings.take().is_some() {
             self.status.clear();
             self.layout();
             SetFocus(self.control(SETTINGS));
@@ -3291,12 +3470,69 @@ impl App {
                     | TRASH
                     | DELETE
                     | EDITOR_SAVE
+                    | MOVE_NOTE
             )
             && self.defer_editor_action(id)
         {
             return;
         }
         match id {
+            BROWSE_MODE if notification == CBN_SELCHANGE => {
+                self.bucket =
+                    SendMessageW(self.control(BROWSE_MODE), CB_GETCURSEL, 0, 0).clamp(0, 2) as u8;
+                self.list = true;
+                self.category_filter = None;
+                self.query.clear();
+                self.label(SEARCH, "");
+                self.selected_tag = None;
+                self.list_scroll = 0;
+                self.refresh_tag_filter();
+                self.refresh_wall_controls();
+                self.layout();
+                self.redraw();
+            }
+            WALL_PICKER if notification == CBN_SELCHANGE => {
+                let selection = SendMessageW(self.control(WALL_PICKER), CB_GETCURSEL, 0, 0);
+                let wall_id = if selection > 0 {
+                    self.wall
+                        .walls
+                        .get(selection as usize - 1)
+                        .map_or(0, |wall| wall.id)
+                } else {
+                    0
+                };
+                self.switch_wall(wall_id);
+            }
+            CATEGORY_FILTER if notification == CBN_SELCHANGE => {
+                let selection = SendMessageW(self.control(CATEGORY_FILTER), CB_GETCURSEL, 0, 0);
+                self.category_filter = match selection {
+                    1 => Some(model::DEFAULT_WALL),
+                    index if index >= 2 => {
+                        self.wall.walls.get(index as usize - 2).map(|wall| wall.id)
+                    }
+                    _ => None,
+                };
+                self.list_scroll = 0;
+                self.redraw();
+            }
+            WALL_MENU if notification == BN_CLICKED => self.wall_menu(),
+            WALL_SAVE if notification == BN_CLICKED => self.save_wall_dialog(),
+            WALL_CANCEL if notification == BN_CLICKED => self.cancel(),
+            MOVE_NOTE if notification == BN_CLICKED => {
+                if self.persist_edit(false)
+                    && let Some(id) = self.editing.as_ref().and_then(|edit| edit.id)
+                {
+                    let mut area = zeroed();
+                    GetWindowRect(self.control(MOVE_NOTE), &mut area);
+                    self.move_menu(
+                        id,
+                        Point {
+                            x: area.left,
+                            y: area.bottom,
+                        },
+                    );
+                }
+            }
             EDITOR_SAVE => {
                 KillTimer(self.hwnd, AUTOSAVE_TIMER);
                 if self.save_body() {
@@ -3318,35 +3554,28 @@ impl App {
                 );
             }
             VIEW if notification == BN_CLICKED => {
-                if !self.query.is_empty() || self.selected_tag.is_some() {
-                    self.label(SEARCH, "");
-                    self.query.clear();
-                    self.selected_tag = None;
-                    SendMessageW(self.control(TAG_FILTER), CB_SETCURSEL, 0, 0);
-                } else if !self.list {
-                    self.list = true;
-                    self.bucket = 0;
-                } else if self.bucket < 2 {
-                    self.bucket += 1;
-                } else {
-                    self.list = false;
-                    self.bucket = 0;
-                }
-                self.label(
-                    VIEW,
-                    match (self.list, self.bucket) {
-                        (false, _) => "文章列表",
-                        (true, 1) => "归档便签",
-                        (true, 2) => "回收站",
-                        _ => "回到墙面",
-                    },
-                );
+                self.list = !self.view_list();
+                self.bucket = 0;
+                self.query.clear();
+                self.label(SEARCH, "");
+                self.selected_tag = None;
+                self.category_filter =
+                    (self.current_wall != model::DEFAULT_WALL).then_some(self.current_wall);
+                self.refresh_tag_filter();
                 self.list_scroll = 0;
                 self.fade(200);
+                if self.bucket != 0 {
+                    self.category_filter = None;
+                }
+                self.refresh_wall_controls();
                 self.layout();
                 self.redraw();
             }
             SEARCH if notification == EN_CHANGE => {
+                if self.query.trim().is_empty() && !self.value(SEARCH).trim().is_empty() {
+                    self.category_filter = None;
+                    self.refresh_wall_controls();
+                }
                 self.query = self.value(SEARCH);
                 self.list_scroll = 0;
                 self.status.clear();
@@ -3494,6 +3723,9 @@ impl App {
                         && self.commit(|wall| wall.set_deleted(id, value), "回收站状态已更新")
                     {
                         self.leave_edit();
+                        if !value {
+                            self.return_home();
+                        }
                     }
                 }
             }
@@ -3523,16 +3755,16 @@ impl App {
     unsafe fn clamp_scroll(&mut self) {
         let area = self.canvas();
         if self.preferences.scroll_wall {
-            let (extent_x, extent_y) =
-                self.wall
-                    .notes
-                    .iter()
-                    .fold((WALL_W, WALL_H), |(width, height), note| {
-                        (
-                            width.max(note.at.x + NOTE_W),
-                            height.max(note.at.y + NOTE_H),
-                        )
-                    });
+            let (extent_x, extent_y) = self.wall.canvas_notes(self.current_wall).into_iter().fold(
+                (WALL_W, WALL_H),
+                |(width, height), note| {
+                    let at = note.position(self.current_wall);
+                    (
+                        width.max(at.x + note.width + 24),
+                        height.max(at.y + note.height + 24),
+                    )
+                },
+            );
             self.offset.x = self
                 .offset
                 .x
@@ -3591,6 +3823,9 @@ impl App {
     }
 
     unsafe fn down(&mut self, point: Point) {
+        if self.wall_dialog.is_some() {
+            return;
+        }
         if self.settings.is_some() {
             return;
         }
@@ -3671,7 +3906,24 @@ impl App {
         }
         if let Some(draft) = self.placement.clone() {
             let at = self.placement_at(point);
-            if self.commit(|wall| wall.place(draft, at), "已贴上墙 · 保存在本机") {
+            let wall_id = self.current_wall;
+            let canvas = self.canvas();
+            let home_span = Point {
+                x: (canvas.right - canvas.left - NOTE_W - 48).max(1),
+                y: (canvas.bottom - canvas.top - NOTE_H - 48).max(1),
+            };
+            if self.commit(
+                |wall| {
+                    wall.place_in(draft, at, wall_id)
+                        .expect("Selected wall exists");
+                    if wall_id != model::DEFAULT_WALL {
+                        let note = wall.notes.last_mut().unwrap();
+                        note.at.x = 24 + note.at.x.rem_euclid(home_span.x);
+                        note.at.y = 24 + note.at.y.rem_euclid(home_span.y);
+                    }
+                },
+                "已贴上墙 · 保存在本机",
+            ) {
                 self.placement = None;
                 self.hover = None;
                 self.query.clear();
@@ -3680,12 +3932,12 @@ impl App {
                 self.layout();
                 self.redraw();
             }
-        } else if let Some(note) = self.wall.hit(self.wall_point(point)) {
+        } else if let Some(note) = self.wall.hit_in(self.wall_point(point), self.current_wall) {
             self.drag = Some(Drag {
                 id: note.id,
                 start: self.wall_point(point),
-                original: note.at,
-                at: note.at,
+                original: note.position(self.current_wall),
+                at: note.position(self.current_wall),
                 moved: false,
             });
             SetCapture(self.hwnd);
@@ -3755,7 +4007,11 @@ impl App {
         ReleaseCapture();
         if drag.moved {
             if drag.at != drag.original {
-                self.commit(|wall| wall.move_to(drag.id, drag.at), "已移动便签");
+                let wall_id = self.current_wall;
+                self.commit(
+                    |wall| wall.move_in(drag.id, drag.at, wall_id),
+                    "已移动便签 · 其他墙面保持不变",
+                );
             }
         } else if let Some(note) = self.wall.notes.iter().find(|note| note.id == drag.id) {
             self.begin_edit(Some(note.id), note.draft());
